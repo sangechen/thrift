@@ -76,5 +76,4 @@ int main(int argc, char** argv) {
   } catch (TException& tx) {
     cout << "ERROR: " << tx.what() << endl;
   }
-
 }
