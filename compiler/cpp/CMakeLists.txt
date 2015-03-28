@@ -68,7 +68,7 @@ set(libparse_SOURCES
 add_library(libparse STATIC ${libparse_SOURCES})
 
 # Create the thrift compiler
-set( thrift_SOURCES 
+set( thrift_SOURCES
     src/main.cc
     src/md5.c
     src/generate/t_generator.cc
@@ -147,6 +147,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR} src)
 add_executable(thrift ${thrift_SOURCES})
 
 target_link_libraries(thrift libparse)
+target_link_libraries(thrift boost_regex)
 
 install(TARGETS thrift DESTINATION bin)
 
