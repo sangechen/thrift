@@ -94,7 +94,7 @@ thrift_SOURCES += src/generate/t_c_glib_generator.cc \
 
 thrift_CPPFLAGS = -I$(srcdir)/src
 thrift_CXXFLAGS = -Wall
-thrift_LDADD = @LEXLIB@ libparse.a
+thrift_LDADD = @LEXLIB@ libparse.a -lboost_regex
 
 libparse_a_CPPFLAGS = -I$(srcdir)/src
 libparse_a_CXXFLAGS = -Wall -Wno-sign-compare -Wno-unused

@@ -78,6 +78,13 @@ class t_cpp_generator : public t_oop_generator {
     gen_templates_only_ =
       (iter != parsed_options.end() && iter->second == "only");
 
+    iter = parsed_options.find("mtpl");
+    render_mtpl = (iter != parsed_options.end());
+    if (render_mtpl && !iter->second.empty())
+      mtpl_dir = iter->second;
+    else
+      mtpl_dir = "./mtpl/";
+
     out_dir_base_ = "gen-cpp";
   }
 
@@ -133,6 +140,7 @@ class t_cpp_generator : public t_oop_generator {
   void generate_service_client    (t_service* tservice, string style);
   void generate_service_processor (t_service* tservice, string style);
   void generate_service_skeleton  (t_service* tservice);
+  void generate_service_mtpl      (t_service* tservice);
   void generate_process_function  (t_service* tservice, t_function* tfunction,
                                    string style, bool specialized=false);
   void generate_function_helpers  (t_service* tservice, t_function* tfunction);
@@ -206,7 +214,7 @@ class t_cpp_generator : public t_oop_generator {
   std::string namespace_prefix(std::string ns);
   std::string namespace_open(std::string ns);
   std::string namespace_close(std::string ns);
-  std::string type_name(t_type* ttype, bool in_typedef=false, bool arg=false);
+  std::string type_name(t_type* ttype, bool in_typedef=false, bool arg=false, bool pre_ns=false);
   std::string base_type_name(t_base_type::t_base tbase);
   std::string declare_field(t_field* tfield, bool init=false, bool pointer=false, bool constant=false, bool reference=false);
   std::string function_signature(t_function* tfunction, std::string style, std::string prefix="", bool name_params=true);
@@ -282,6 +290,12 @@ class t_cpp_generator : public t_oop_generator {
    * True if we should omit calls to completion__() in CobClient class.
    */
   bool gen_no_client_completion_;
+
+  /**
+   * True if we should render mustache template.
+   */
+  bool render_mtpl;
+  std::string mtpl_dir;
 
   /**
    * Strings for namespace, computed once up front then used directly
@@ -1675,6 +1689,7 @@ void t_cpp_generator::generate_service(t_service* tservice) {
   generate_service_processor(tservice, "");
   generate_service_multiface(tservice);
   generate_service_skeleton(tservice);
+  if (render_mtpl) generate_service_mtpl(tservice);
 
   // Generate all the cob components
   if (gen_cob_style_) {
@@ -4284,7 +4299,7 @@ string t_cpp_generator::namespace_close(string ns) {
  * @param ttype The type
  * @return String of the type name, i.e. std::set<type>
  */
-string t_cpp_generator::type_name(t_type* ttype, bool in_typedef, bool arg) {
+string t_cpp_generator::type_name(t_type* ttype, bool in_typedef, bool arg, bool pre_ns) {
   if (ttype->is_base_type()) {
     string bname = base_type_name(((t_base_type*)ttype)->get_base());
     std::map<string, string>::iterator it = ttype->annotations_.find("cpp.type");
@@ -4338,7 +4353,7 @@ string t_cpp_generator::type_name(t_type* ttype, bool in_typedef, bool arg) {
   // Check if it needs to be namespaced
   string pname;
   t_program* program = ttype->get_program();
-  if (program != NULL && program != program_) {
+  if (pre_ns || (program != NULL && program != program_)) {
     pname =
       class_prefix +
       namespace_prefix(program->get_namespace("cpp")) +
@@ -4639,5 +4654,188 @@ THRIFT_REGISTER_GENERATOR(cpp, "C++",
 "    pure_enums:      Generate pure enums instead of wrapper classes.\n"
 "    dense:           Generate type specifications for the dense protocol.\n"
 "    include_prefix:  Use full include paths in generated files.\n"
+"    mtpl:            render mustache template. [=<mtpl_dir>{./mtpl/}]\n"
 )
+
+
+
+//this include is ugly ^_^.
+//I don't want to change the Makefile
+#include "plustache/context.cpp"
+#include "plustache/template.cpp"
+
+#include <fstream>
+#include <string>
+#include <boost/algorithm/string/replace.hpp>
+
+using namespace std;
+
+void print_map(const std::map<std::string, std::string>& _map) {
+  for (std::map<std::string, std::string>::const_iterator a_itr = _map.begin(); a_itr != _map.end(); a_itr++) {
+    std::cout << a_itr->first << ":" << a_itr->second << std::endl;
+  }
+}
+
+void create_parent_dir(const string file) {
+  string dir = directory_name(file);
+  if (dir != ".") {
+    create_parent_dir(dir);
+  }
+
+  MKDIR(dir.c_str());
+}
+
+void render_mtpl_func(const string& dest_file, const string& mtpl_file, const Context& ctx, const string& mtpl_dir) {
+  create_parent_dir(dest_file);
+
+  std::ofstream of(dest_file.c_str(), std::ios_base::trunc);
+
+  Plustache::template_t t(mtpl_dir);
+  of << t.render(mtpl_file, ctx);
+
+  of.close();
+}
+
+/**
+ * Generates a skeleton file of a server
+ *
+ * @param tservice The service to generate a server for.
+ */
+void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
+  PlustacheTypes::ObjectType serviceMap;
+  PlustacheTypes::CollectionType vecFunctionMap; //func_list
+
+  string program_name = underscore(tservice->get_program()->get_name());
+  serviceMap["program_name"] = (program_name);
+
+  string ns = underscore(tservice->get_program()->get_namespace("cpp"));
+  serviceMap["ns"] = (ns);
+  serviceMap["ns_pre"] = namespace_prefix(ns);
+  serviceMap["ns_path"] = boost::algorithm::replace_all_copy(ns, ".", "/");
+  //#warning: 校验下${ns_pre}的第2段和${program_name}的去掉'_server'后一致! 值为${svr_name}
+
+  string ServiceName = camelcase(tservice->get_name());
+  serviceMap["ServiceName"] = (ServiceName);
+  serviceMap["SERVICENAME"] = uppercase(ServiceName);
+  serviceMap["service_name"] = underscore(ServiceName);
+  serviceMap["SERVICE_NAME"] = uppercase(serviceMap["service_name"]);
+  //#error: 校验下${program_name}和${service_name}是符合一致!
+
+  serviceMap["log_logger"] = serviceMap["ns"] + "." + serviceMap["service_name"];
+  serviceMap["LOG_APPENDER"] = uppercase(boost::algorithm::replace_all_copy(serviceMap["log_logger"], ".", "_"));
+  serviceMap["port"] = "9100";
+
+  //todo merge service annotations_
+  for (std::map<std::string, std::string>::const_iterator a_itr = tservice->annotations_.begin(); a_itr != tservice->annotations_.end(); a_itr++) {
+    serviceMap[a_itr->first] = a_itr->second;
+  }
+
+  //往上回溯service, 处理所有的function
+  t_service* psvc = tservice;
+  while (psvc) {
+    vector<t_function*> vecFunctions = psvc->get_functions();
+    vector<t_function*>::iterator pfunc;
+
+    for (pfunc = vecFunctions.begin(); pfunc != vecFunctions.end(); pfunc++) {
+      PlustacheTypes::ObjectType functionMap;
+
+      functionMap["funcName"] = (*pfunc)->get_name();
+      functionMap["FuncName"] = capitalize(functionMap["funcName"]);
+      functionMap["FUNCNAME"] = uppercase(functionMap["funcName"]);
+
+      t_type* ttype = (*pfunc)->get_returntype();
+      t_struct* arglist = (*pfunc)->get_arglist();
+      bool first = true;
+
+      if (is_complex_type(ttype)) {
+        functionMap["funcReturnType"] = "void";
+        //functionMap["defineReturnVal"] = "false";
+        functionMap["funcParameters"] = type_name(ttype, false, false, true) + "& _return";
+        functionMap["funcArguments"] = "_return";
+        functionMap["_RETURN_FOR_OS"] = "JsonDumpString(_return)";
+        first = false; //_return已经作为第一个参数
+      } else {
+        functionMap["funcReturnType"] = type_name(ttype);
+        functionMap["defineReturnVal"] = (functionMap["funcReturnType"] == "void") ? "false" : "true";
+        functionMap["funcParameters"] = "";
+        functionMap["funcArguments"] = "";
+        functionMap["_RETURN_FOR_OS"] = (functionMap["funcReturnType"] == "void") ? "\"void\"" : "_return";
+      }
+
+      const vector<t_field*>& fields = arglist->get_members();
+      vector<t_field*>::const_iterator f_iter;
+      for (f_iter = fields.begin(); f_iter != fields.end(); ++f_iter) {
+        if (first) {
+          first = false;
+        } else {
+          functionMap["funcParameters"] += ", ";
+          functionMap["funcArguments"] += ", ";
+        }
+
+        functionMap["funcParameters"] += type_name((*f_iter)->get_type(), false, true, true) + " " + (*f_iter)->get_name();
+        functionMap["funcArguments"] += (*f_iter)->get_name();
+        if ((*f_iter)->annotations_.find("REQ_FOR_OS") != (*f_iter)->annotations_.end())
+          functionMap["REQ_FOR_OS"] = (*f_iter)->annotations_["REQ_FOR_OS"] + " << "; //per field annotation
+        else if (is_complex_type((*f_iter)->get_type()))
+          functionMap["REQ_FOR_OS"] = "JsonDumpString(" + (*f_iter)->get_name() + ") << ";
+        else
+          functionMap["REQ_FOR_OS"] = (*f_iter)->get_name() + " << ";
+      }
+
+      if (functionMap["REQ_FOR_OS"].size() > 4)
+        functionMap["REQ_FOR_OS"].erase(functionMap["REQ_FOR_OS"].size() - 4, 4);
+      functionMap["TRANSACTION_ISOLATION_LEVEL"] = "SERIALIZABLE";
+
+      //todo merge function annotations_
+      for (std::map<std::string, std::string>::const_iterator a_itr = (*pfunc)->annotations_.begin(); a_itr != (*pfunc)->annotations_.end(); a_itr++) {
+        functionMap[a_itr->first] = a_itr->second;
+      }
+
+      vecFunctionMap.push_back(functionMap);
+    }
+
+    psvc = psvc->get_extends();
+  }
+
+  print_map(serviceMap);
+  for (size_t i = 0; i < vecFunctionMap.size(); i++)
+    print_map(vecFunctionMap[i]);
+
+  Context ctx_1;
+  ctx_1.add(serviceMap);
+  ctx_1.add("func_list", vecFunctionMap);
+
+  //开始生成
+  std::ifstream if_mtpl_file_list;
+  if_mtpl_file_list.open((mtpl_dir + "/mtpl_file_list.txt").c_str());
+
+  string line;
+  while (std::getline(if_mtpl_file_list, line).good()) {
+    if (line.size() < 3 || (line[0] != '1' && line[0] != 'n'))
+      continue;
+
+    string tpl_file = line.substr(2);
+    if (line[0] == '1') { //per service
+      Plustache::template_t t;
+      string dest_file_name = get_out_dir() + t.render(tpl_file, ctx_1);
+
+      render_mtpl_func(dest_file_name, tpl_file, ctx_1, mtpl_dir);
+    } else if (line[0] == 'n') { //per function
+      for (size_t i = 0; i < vecFunctionMap.size(); i++) {
+        Context ctx_n = ctx_1;
+        ctx_n.add(vecFunctionMap[i]); //merge
+
+        Plustache::template_t t;
+        string dest_file_name = get_out_dir() + t.render(tpl_file, ctx_n);
+
+        render_mtpl_func(dest_file_name, tpl_file, ctx_n, mtpl_dir);
+      }
+    }
+    //else
+
+  }
+
+  if_mtpl_file_list.close();
+
+}
 
