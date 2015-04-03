@@ -85,6 +85,13 @@ class t_cpp_generator : public t_oop_generator {
     else
       mtpl_dir = "./mtpl/";
 
+    iter = parsed_options.find("name_mapping");
+    gen_name_mapping = (iter != parsed_options.end());
+    if (gen_name_mapping && !iter->second.empty())
+      special_fid = iter->second;
+    else
+      special_fid = "std::numeric_limits<int16_t>::min()";
+
     out_dir_base_ = "gen-cpp";
   }
 
@@ -296,6 +303,12 @@ class t_cpp_generator : public t_oop_generator {
    */
   bool render_mtpl;
   std::string mtpl_dir;
+
+  /**
+   * True if we should generate name mapping for read struct.
+   */
+  bool gen_name_mapping;
+  std::string special_fid;
 
   /**
    * Strings for namespace, computed once up front then used directly
@@ -1295,6 +1308,29 @@ void t_cpp_generator::generate_struct_reader(ofstream& out,
         indent() << "xfer += iprot->skip(ftype);" << endl;
     }
     else {
+      if (gen_name_mapping) {
+      indent(out) <<
+        "//if fid == <special_fid>, use name mapping for reading." << endl;
+      indent(out) <<
+        "if (fid == " << special_fid << ")" << endl;
+        scope_up(out);
+        for (f_iter = fields.begin(); f_iter != fields.end(); ++f_iter) {
+          indent(out) <<
+            "if (fname == \"" << (*f_iter)->get_name() << "\") {" << endl;
+          indent_up();
+            indent(out) <<
+              "fid = "<< (*f_iter)->get_key() << ";" << endl;
+            indent(out) <<
+              "ftype = " << type_to_enum((*f_iter)->get_type()) << ";" << endl;
+          indent_down();
+          indent(out) <<
+            "}" << endl;
+        }
+        scope_down(out);
+      }
+
+
+
       // Switch statement on the field we are reading
       indent(out) <<
         "switch (fid)" << endl;
@@ -4655,6 +4691,8 @@ THRIFT_REGISTER_GENERATOR(cpp, "C++",
 "    dense:           Generate type specifications for the dense protocol.\n"
 "    include_prefix:  Use full include paths in generated files.\n"
 "    mtpl:            render mustache template. [=<mtpl_dir>{./mtpl/}]\n"
+"    name_mapping:    Generate name mapping for struct's fields in order to read from json/xml.\n"
+"                     [=<special_fid>{std::numeric_limits<int16_t>::min()}]\n"
 )
 
 
