@@ -42,6 +42,19 @@ using std::vector;
 
 static const string endl = "\n";  // avoid ostream << std::endl flushes
 
+namespace {
+
+  enum TerseWrites { TW_DISABLED = 0, TW_SAFE = 1, TW_ALL = 2 };
+
+  template <class Options>
+  TerseWrites parseTerseWrites(const Options& options) {
+    std::map<std::string, std::string>::const_iterator iter = options.find("terse_writes");
+    return (iter == options.end()) ? TW_DISABLED :
+           (iter->second == "safe") ? TW_SAFE : TW_ALL;
+  }
+
+} // namespace
+
 /**
  * C++ code generator. This is legitimacy incarnate.
  *
@@ -91,6 +104,8 @@ class t_cpp_generator : public t_oop_generator {
       special_fid = iter->second;
     else
       special_fid = "std::numeric_limits<int16_t>::min()";
+
+    terse_writes_ = parseTerseWrites(parsed_options);
 
     out_dir_base_ = "gen-cpp";
   }
@@ -229,6 +244,8 @@ class t_cpp_generator : public t_oop_generator {
   std::string argument_list(t_struct* tstruct, bool name_params=true, bool start_comma=false);
   std::string type_to_enum(t_type* ttype);
   std::string local_reflection_name(const char*, t_type* ttype, bool external=false);
+  bool try_terse_write_predicate(ofstream& out, t_field* t, bool pointers, TerseWrites terse_writes,
+                                 string& predicate);
 
   void generate_enum_constant_list(std::ofstream& f,
                                    const vector<t_enum_value*>& constants,
@@ -309,6 +326,15 @@ class t_cpp_generator : public t_oop_generator {
    */
   bool gen_name_mapping;
   std::string special_fid;
+
+  /**
+   * Should write function avoid emitting values that are unchanged
+   * from default, if not explicitly optional/required?
+   * Caveats, when whitelisted:
+   *  - don't change default values when turned on.
+   *  - read() should be done into fresh or __clear()ed objects.
+   */
+  TerseWrites terse_writes_;
 
   /**
    * Strings for namespace, computed once up front then used directly
@@ -1415,6 +1441,70 @@ void t_cpp_generator::generate_struct_reader(ofstream& out,
 }
 
 /**
+ * Generates a terse write predicate - checks if the value
+ * has changed from its initial value.
+ */
+bool t_cpp_generator::try_terse_write_predicate(
+    ofstream& out, t_field* tfield, bool pointers, TerseWrites terse_writes,
+    string& predicate) {
+  if (terse_writes == TW_DISABLED) {
+    return false;
+  }
+
+  // Only do terse writes for fields where required/optional isn't specified.
+  if (tfield->get_req() == t_field::T_REQUIRED ||
+      tfield->get_req() == t_field::T_OPTIONAL) {
+    return false;
+  }
+  t_type* type = get_true_type(tfield->get_type());
+  t_const_value* tval = tfield->get_value();
+
+  // Terse write is unsafe to use without explicitly setting default value,
+  // as in PHP / Python that would change result of deserialization (comparing
+  // with the case when terse_writes is not used): field set in C++ to default
+  // value would be deserialized as null / None.
+  if (terse_writes == TW_SAFE && tval == nullptr) {
+    return false;
+  }
+
+  if (type->is_struct() || type->is_xception() ||
+      // no support for void.
+      (type->is_base_type() && ((t_base_type*)type)->is_void()) ||
+      // only support string, if default empty.
+      (type->is_base_type() && ((t_base_type*)type)->is_string() &&
+       tval != nullptr && !tval->get_string().empty()) ||
+      // only support container, if default empty.
+      (type->is_container() && tval != nullptr &&
+       ((tval->get_type() == t_const_value::CV_LIST &&
+         !tval->get_list().empty()) ||
+        (tval->get_type() == t_const_value::CV_MAP &&
+         !tval->get_map().empty())))
+      ) {
+    return false;
+  }
+
+  // Containers -> "if (!x.empty())"
+  if (type->is_container() ||
+      (type->is_base_type() && ((t_base_type*)type)->is_string())) {
+    predicate = "!this->" + tfield->get_name() +
+      (pointers ? "->empty()" : ".empty()");
+    return true;
+  }
+  // ints, enum -> "if (x != default value)
+  if (type->is_base_type() || type->is_enum()) {
+    std::string const_value = "0";
+    if (tval != NULL) {
+      const_value = render_const_value(out, "", type, tval);
+    }
+    predicate = (pointers ? "*(this->" : "this->") +
+      tfield->get_name() + (pointers ? ") != " : " != ") +
+      const_value;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Generates the write function.
  *
  * @param out Stream to write to
@@ -1426,6 +1516,9 @@ void t_cpp_generator::generate_struct_writer(ofstream& out,
   string name = tstruct->get_name();
   const vector<t_field*>& fields = tstruct->get_sorted_members();
   vector<t_field*>::const_iterator f_iter;
+  string predicate;
+  const TerseWrites terse_writes =
+    std::max(terse_writes_, parseTerseWrites(tstruct->annotations_));
 
   if (gen_templates_) {
     out <<
@@ -1451,6 +1544,11 @@ void t_cpp_generator::generate_struct_writer(ofstream& out,
     if (check_if_set) {
       out << endl << indent() << "if (this->__isset." << (*f_iter)->get_name() << ") {" << endl;
       indent_up();
+    } else if (try_terse_write_predicate(out, *f_iter, pointers, terse_writes,
+                                         predicate)) {
+      indent(out) << "if (" << predicate << ") {" << endl;
+      indent_up();
+      check_if_set = true;
     } else {
       out << endl;
     }
@@ -4693,6 +4791,12 @@ THRIFT_REGISTER_GENERATOR(cpp, "C++",
 "    mtpl:            render mustache template. [=<mtpl_dir>{./mtpl/}]\n"
 "    name_mapping:    Generate name mapping for struct's fields in order to read from json/xml.\n"
 "                     [=<special_fid>{std::numeric_limits<int16_t>::min()}]\n"
+"    terse_writes:    Should write function avoid emitting values that are unchanged from default,\n"
+"                     if not explicitly optional/required?\n"
+"                     =safe to compatible with PHP\n"
+"                     Caveats, when whitelisted:\n"
+"                      - don't change default values when turned on.\n"
+"                      - read() should be done into fresh or __clear()ed objects.\n"
 )
 
 
