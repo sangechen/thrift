@@ -16,10 +16,12 @@ gen-*
 *_ReSharper*
 *.opensdf
 *.swp
-.project
+.*project
 .pydevproject
 .sonar
 .DS_Store
+compile
+test-driver
 
 /Makefile
 /Makefile.in

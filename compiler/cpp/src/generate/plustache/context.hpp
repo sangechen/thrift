@@ -20,7 +20,7 @@ namespace Plustache {
 	    int add(const PlustacheTypes::ObjectType& o);
 	    PlustacheTypes::CollectionType get(const std::string& key) const;
 
-	private:
+	public:
 	    /* data */
 	    std::map<std::string, PlustacheTypes::CollectionType> ctx;
 	};

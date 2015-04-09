@@ -36,6 +36,30 @@ template_t::template_t(const std::string& tmpl_path)
     template_t::compile_data();
 }
 
+int lvl = 1;
+
+void print_map1(const std::map<std::string, std::string>& _map) {
+  for (std::map<std::string, std::string>::const_iterator a_itr = _map.begin(); a_itr != _map.end(); a_itr++) {
+    std::cout << a_itr->first << ":" << a_itr->second << ";  ";
+  }
+}
+
+void print_ctx(const Context& ctx)
+{
+	std::cout << endl <<"ctx:=========================================================" << endl << endl;
+	for (std::map<std::string, std::vector<std::map<std::string, std::string> > >::const_iterator a_itr = ctx.ctx.begin(); a_itr != ctx.ctx.end(); a_itr++)
+	{
+		std::cout << a_itr->first << " {{ " << std::endl;
+		for (size_t i = 0; i < a_itr->second.size(); i++)
+		{
+			std::cout << "["<< i << "]: {";
+			print_map1(a_itr->second[i]);
+			std::cout << "}" << std::endl;
+		}
+		std::cout << "}}" << std::endl;
+	}
+}
+
 /**
  * @brief function to compile all the basic data like regex, tags, etc.
  */
@@ -212,7 +236,7 @@ std::string template_t::render_sections(const std::string& tmplate,
             // empty map bucket means false
             if (values[0].find(key) != values[0].end())
             {
-              show = values[0][key] != "" ? values[0][key] : "false";
+              show = values[0][key] != "" ? "true"/*values[0][key]*/ : "false";
             }
             // if we have a collection, we want to show it if there is
             // something to show
@@ -244,7 +268,13 @@ std::string template_t::render_sections(const std::string& tmplate,
                   Context small_ctx;
                   small_ctx = ctx;
                   small_ctx.add(*it);
-                  repl += template_t::render(matches[3], small_ctx);
+                  //std::cout << endl << endl << endl << ++lvl << "*****************************************************************" << endl;
+                  //std::cout << "m3:" << matches[3] << std::endl;
+                  //print_ctx(small_ctx);
+                  string tmp = template_t::render(matches[3], small_ctx);
+                  //std::cout << "tmp:" << tmp << std::endl << std::endl << std::endl;
+                  //std::cout << endl << endl << endl << --lvl << "#################################################################" << endl;
+                  repl += tmp;
                 }
 //            }
         }
