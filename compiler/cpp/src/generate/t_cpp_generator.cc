@@ -4839,6 +4839,17 @@ void render_mtpl_func(const string& dest_file, const string& mtpl_file, const Co
   of.close();
 }
 
+void process_includes(std::vector<string>& src_filename_list, t_program* prog)
+{
+  src_filename_list.push_back(prog->get_name()+"_types"); //xxx_types.cpp
+  src_filename_list.push_back(prog->get_name()+"_constants"); //xxx_constants.cpp
+
+  std::vector<t_program*>& incs = prog->get_includes();
+  for (std::vector<t_program*>::iterator itr = incs.begin(); itr != incs.end(); itr++) {
+    process_includes(src_filename_list, *itr);
+  }
+}
+
 /**
  * Generates a skeleton file of a server
  *
@@ -4875,9 +4886,14 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
     serviceMap[a_itr->first] = a_itr->second;
   }
 
+  std::vector<string> src_filename_list;
+
   //往上回溯service, 处理所有的function
   t_service* psvc = tservice;
   while (psvc) {
+    src_filename_list.push_back(psvc->get_name()); //ServiceName.cpp
+    process_includes(src_filename_list, psvc->get_program());
+
     vector<t_function*> vecFunctions = psvc->get_functions();
     vector<t_function*>::iterator pfunc;
 
@@ -4887,6 +4903,8 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
       functionMap["funcName"] = (*pfunc)->get_name();
       functionMap["FuncName"] = capitalize(functionMap["funcName"]);
       functionMap["FUNCNAME"] = uppercase(functionMap["funcName"]);
+
+      functionMap["funcServiceName"] = namespace_prefix(underscore(psvc->get_program()->get_namespace("cpp")))+camelcase(psvc->get_name());
 
 
       functionMap["isFuncOneWay"] = ((*pfunc)->is_oneway()) ? "true" : ""; //空表示false
@@ -4962,6 +4980,11 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
   Context ctx_1;
   ctx_1.add(serviceMap);
   ctx_1.add("func_list", vecFunctionMap);
+  for (std::vector<string>::iterator itr = src_filename_list.begin(); itr != src_filename_list.end(); itr++) {
+    PlustacheTypes::ObjectType obj;
+    obj["src_filename"] = *itr;
+    ctx_1.add("src_filename_list", obj);
+  }
 
   //开始生成
   std::ifstream if_mtpl_file_list;
