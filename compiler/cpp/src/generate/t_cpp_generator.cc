@@ -4462,14 +4462,14 @@ string t_cpp_generator::type_name(t_type* ttype, bool in_typedef, bool arg, bool
     } else if (ttype->is_map()) {
       t_map* tmap = (t_map*) ttype;
       cname = "std::map<" +
-        type_name(tmap->get_key_type(), in_typedef) + ", " +
-        type_name(tmap->get_val_type(), in_typedef) + "> ";
+        type_name(tmap->get_key_type(), in_typedef, false, pre_ns) + ", " +
+        type_name(tmap->get_val_type(), in_typedef, false, pre_ns) + "> ";
     } else if (ttype->is_set()) {
       t_set* tset = (t_set*) ttype;
-      cname = "std::set<" + type_name(tset->get_elem_type(), in_typedef) + "> ";
+      cname = "std::set<" + type_name(tset->get_elem_type(), in_typedef, false, pre_ns) + "> ";
     } else if (ttype->is_list()) {
       t_list* tlist = (t_list*) ttype;
-      cname = "std::vector<" + type_name(tlist->get_elem_type(), in_typedef) + "> ";
+      cname = "std::vector<" + type_name(tlist->get_elem_type(), in_typedef, false, pre_ns) + "> ";
     }
 
     if (arg) {
@@ -4869,7 +4869,8 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
   serviceMap["ns_path"] = boost::algorithm::replace_all_copy(ns, ".", "/");
   //#warning: 校验下${ns_pre}的第2段和${program_name}的去掉'_server'后一致! 值为${svr_name}
 
-  string ServiceName = camelcase(tservice->get_name());
+  serviceMap["_ServiceName"] = tservice->get_name();
+  string ServiceName = camelcase(serviceMap["_ServiceName"]);
   serviceMap["ServiceName"] = (ServiceName);
   serviceMap["SERVICENAME"] = uppercase(ServiceName);
   serviceMap["service_name"] = underscore(ServiceName);
@@ -4900,11 +4901,13 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
     for (pfunc = vecFunctions.begin(); pfunc != vecFunctions.end(); pfunc++) {
       PlustacheTypes::ObjectType functionMap;
 
-      functionMap["funcName"] = (*pfunc)->get_name();
-      functionMap["FuncName"] = capitalize(functionMap["funcName"]);
-      functionMap["FUNCNAME"] = uppercase(functionMap["funcName"]);
+      functionMap["_funcName"] = (*pfunc)->get_name();
+      string funcName = decapitalize(functionMap["_funcName"]);
+      functionMap["funcName"] = (funcName);
+      functionMap["FuncName"] = capitalize(funcName);
+      functionMap["FUNCNAME"] = uppercase(funcName);
 
-      functionMap["funcServiceName"] = namespace_prefix(underscore(psvc->get_program()->get_namespace("cpp")))+camelcase(psvc->get_name());
+      functionMap["_funcServiceName"] = namespace_prefix(/*underscore*/(psvc->get_program()->get_namespace("cpp")))+/*camelcase*/(psvc->get_name());
 
 
       functionMap["isFuncOneWay"] = ((*pfunc)->is_oneway()) ? "true" : ""; //空表示false
