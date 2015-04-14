@@ -212,7 +212,7 @@ std::string template_t::render_sections(const std::string& tmplate,
             // empty map bucket means false
             if (values[0].find(key) != values[0].end())
             {
-              show = values[0][key] != "" ? values[0][key] : "false";
+              show = values[0][key] != "" ? "true"/*values[0][key]*/ : "false";
             }
             // if we have a collection, we want to show it if there is
             // something to show

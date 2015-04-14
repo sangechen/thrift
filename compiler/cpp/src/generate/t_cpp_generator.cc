@@ -4797,14 +4797,14 @@ string t_cpp_generator::type_name(t_type* ttype, bool in_typedef, bool arg, bool
     } else if (ttype->is_map()) {
       t_map* tmap = (t_map*) ttype;
       cname = "std::map<" +
-        type_name(tmap->get_key_type(), in_typedef) + ", " +
-        type_name(tmap->get_val_type(), in_typedef) + "> ";
+        type_name(tmap->get_key_type(), in_typedef, false, pre_ns) + ", " +
+        type_name(tmap->get_val_type(), in_typedef, false, pre_ns) + "> ";
     } else if (ttype->is_set()) {
       t_set* tset = (t_set*) ttype;
-      cname = "std::set<" + type_name(tset->get_elem_type(), in_typedef) + "> ";
+      cname = "std::set<" + type_name(tset->get_elem_type(), in_typedef, false, pre_ns) + "> ";
     } else if (ttype->is_list()) {
       t_list* tlist = (t_list*) ttype;
-      cname = "std::vector<" + type_name(tlist->get_elem_type(), in_typedef) + "> ";
+      cname = "std::vector<" + type_name(tlist->get_elem_type(), in_typedef, false, pre_ns) + "> ";
     }
 
     if (arg) {
@@ -5154,7 +5154,8 @@ using namespace std;
 
 void print_map(const std::map<std::string, std::string>& _map) {
   for (std::map<std::string, std::string>::const_iterator a_itr = _map.begin(); a_itr != _map.end(); a_itr++) {
-    std::cout << a_itr->first << ":" << a_itr->second << std::endl;
+    //std::cout << a_itr->first << ":" << a_itr->second << std::endl;
+    pdebug("%s: %s", a_itr->first.c_str(), a_itr->second.c_str());
   }
 }
 
@@ -5178,6 +5179,17 @@ void render_mtpl_func(const string& dest_file, const string& mtpl_file, const Co
   of.close();
 }
 
+void process_includes(std::vector<string>& src_filename_list, t_program* prog)
+{
+  src_filename_list.push_back(prog->get_name()+"_types"); //xxx_types.cpp
+  src_filename_list.push_back(prog->get_name()+"_constants"); //xxx_constants.cpp
+
+  std::vector<t_program*>& incs = prog->get_includes();
+  for (std::vector<t_program*>::iterator itr = incs.begin(); itr != incs.end(); itr++) {
+    process_includes(src_filename_list, *itr);
+  }
+}
+
 /**
  * Generates a skeleton file of a server
  *
@@ -5193,14 +5205,17 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
   string ns = underscore(tservice->get_program()->get_namespace("cpp"));
   serviceMap["ns"] = (ns);
   serviceMap["ns_pre"] = namespace_prefix(ns);
+  serviceMap["ns_using"] = serviceMap["ns_pre"].substr(0, serviceMap["ns_pre"].length()-2);
   serviceMap["ns_path"] = boost::algorithm::replace_all_copy(ns, ".", "/");
   //#warning: 校验下${ns_pre}的第2段和${program_name}的去掉'_server'后一致! 值为${svr_name}
 
-  string ServiceName = camelcase(tservice->get_name());
+  serviceMap["_ServiceName"] = tservice->get_name();
+  string ServiceName = camelcase(serviceMap["_ServiceName"]);
   serviceMap["ServiceName"] = (ServiceName);
   serviceMap["SERVICENAME"] = uppercase(ServiceName);
   serviceMap["service_name"] = underscore(ServiceName);
   serviceMap["SERVICE_NAME"] = uppercase(serviceMap["service_name"]);
+  serviceMap["service_name_pre"] = boost::algorithm::replace_all_copy(serviceMap["service_name"], "_server", "");
   //#error: 校验下${program_name}和${service_name}是符合一致!
 
   serviceMap["log_logger"] = serviceMap["ns"] + "." + serviceMap["service_name"];
@@ -5212,60 +5227,82 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
     serviceMap[a_itr->first] = a_itr->second;
   }
 
+  std::vector<string> src_filename_list;
+
   //往上回溯service, 处理所有的function
   t_service* psvc = tservice;
   while (psvc) {
+    src_filename_list.push_back(psvc->get_name()); //ServiceName.cpp
+    process_includes(src_filename_list, psvc->get_program());
+
     vector<t_function*> vecFunctions = psvc->get_functions();
     vector<t_function*>::iterator pfunc;
 
     for (pfunc = vecFunctions.begin(); pfunc != vecFunctions.end(); pfunc++) {
       PlustacheTypes::ObjectType functionMap;
 
-      functionMap["funcName"] = (*pfunc)->get_name();
-      functionMap["FuncName"] = capitalize(functionMap["funcName"]);
-      functionMap["FUNCNAME"] = uppercase(functionMap["funcName"]);
+      functionMap["_funcName"] = (*pfunc)->get_name();
+      string funcName = decapitalize(functionMap["_funcName"]);
+      functionMap["funcName"] = (funcName);
+      functionMap["FuncName"] = capitalize(funcName);
+      functionMap["FUNCNAME"] = uppercase(funcName);
 
-      t_type* ttype = (*pfunc)->get_returntype();
-      t_struct* arglist = (*pfunc)->get_arglist();
-      bool first = true;
+      functionMap["_funcServiceName"] = namespace_prefix(/*underscore*/(psvc->get_program()->get_namespace("cpp")))+/*camelcase*/(psvc->get_name());
 
-      if (is_complex_type(ttype)) {
+
+      functionMap["isFuncOneWay"] = ((*pfunc)->is_oneway()) ? "true" : ""; //空表示false
+
+      t_type* rt_ttype = (*pfunc)->get_returntype();
+
+      //用于定义_return变量
+      string cpp_rt_type_name = type_name(rt_ttype, false, false, true);
+      functionMap["funcCppRtTypeName"] = rt_ttype->is_void() ? "" : cpp_rt_type_name; //void填空
+
+      functionMap["isFuncComplexType"] = is_complex_type(rt_ttype) ? "true" : "";
+
+      //函数返回类型是复杂类型(string以上) 或者 返回void时 不需要定义返回值变量
+      functionMap["hasFuncReturnVal"] = (rt_ttype->is_void() || is_complex_type(rt_ttype)) ? "" : "true"; //空表示false
+
+
+      if (rt_ttype->is_void()) { //void 包含纯void 和 oneway的void
         functionMap["funcReturnType"] = "void";
-        //functionMap["defineReturnVal"] = "false";
-        functionMap["funcParameters"] = type_name(ttype, false, false, true) + "& _return";
-        functionMap["funcArguments"] = "_return";
-        functionMap["_RETURN_FOR_OS"] = "JsonDumpString(_return)";
-        first = false; //_return已经作为第一个参数
-      } else {
-        functionMap["funcReturnType"] = type_name(ttype);
-        functionMap["defineReturnVal"] = (functionMap["funcReturnType"] == "void") ? "false" : "true";
         functionMap["funcParameters"] = "";
         functionMap["funcArguments"] = "";
-        functionMap["_RETURN_FOR_OS"] = (functionMap["funcReturnType"] == "void") ? "\"void\"" : "_return";
+        functionMap["_RETURN_FOR_OS"] = "";
+      } else if (is_complex_type(rt_ttype)) { //process函数中第一个参数是 T& _return,
+        functionMap["funcReturnType"] = "void";
+        functionMap["funcParameters"] = cpp_rt_type_name + "& _return, ";
+        functionMap["funcArguments"] = "_return, ";
+        functionMap["_RETURN_FOR_OS"] = "JsonDumpString(_return)";
+      } else { //simple type作为process函数的返回类型, 需要定义变量来接收返回值.
+        functionMap["funcReturnType"] = cpp_rt_type_name;
+        functionMap["funcParameters"] = "";
+        functionMap["funcArguments"] = "";
+        functionMap["_RETURN_FOR_OS"] = "_return";
       }
 
+      t_struct* arglist = (*pfunc)->get_arglist();
       const vector<t_field*>& fields = arglist->get_members();
       vector<t_field*>::const_iterator f_iter;
       for (f_iter = fields.begin(); f_iter != fields.end(); ++f_iter) {
-        if (first) {
-          first = false;
-        } else {
-          functionMap["funcParameters"] += ", ";
-          functionMap["funcArguments"] += ", ";
-        }
+        functionMap["funcParameters"] += type_name((*f_iter)->get_type(), false, true, true) + " " + (*f_iter)->get_name() + ", ";
+        functionMap["funcArguments"] += (*f_iter)->get_name() + ", ";
 
-        functionMap["funcParameters"] += type_name((*f_iter)->get_type(), false, true, true) + " " + (*f_iter)->get_name();
-        functionMap["funcArguments"] += (*f_iter)->get_name();
         if ((*f_iter)->annotations_.find("REQ_FOR_OS") != (*f_iter)->annotations_.end())
-          functionMap["REQ_FOR_OS"] = (*f_iter)->annotations_["REQ_FOR_OS"] + " << "; //per field annotation
+          functionMap["REQ_FOR_OS"] = (*f_iter)->annotations_["REQ_FOR_OS"] + " << ', ' << "; //per field annotation
         else if (is_complex_type((*f_iter)->get_type()))
-          functionMap["REQ_FOR_OS"] = "JsonDumpString(" + (*f_iter)->get_name() + ") << ";
+          functionMap["REQ_FOR_OS"] = "JsonDumpString(" + (*f_iter)->get_name() + ") << ', ' << ";
         else
-          functionMap["REQ_FOR_OS"] = (*f_iter)->get_name() + " << ";
+          functionMap["REQ_FOR_OS"] = (*f_iter)->get_name() + " << ', ' << ";
       }
 
-      if (functionMap["REQ_FOR_OS"].size() > 4)
-        functionMap["REQ_FOR_OS"].erase(functionMap["REQ_FOR_OS"].size() - 4, 4);
+      if (functionMap["funcParameters"].size() > 2)
+        functionMap["funcParameters"].erase(functionMap["funcParameters"].size() - 2, 2);
+      if (functionMap["funcArguments"].size() > 2)
+        functionMap["funcArguments"].erase(functionMap["funcArguments"].size() - 2, 2);
+      if (functionMap["REQ_FOR_OS"].size() > 12)
+        functionMap["REQ_FOR_OS"].erase(functionMap["REQ_FOR_OS"].size() - 12, 12);
+
       functionMap["TRANSACTION_ISOLATION_LEVEL"] = "SERIALIZABLE";
 
       //todo merge function annotations_
@@ -5286,6 +5323,11 @@ void t_cpp_generator::generate_service_mtpl(t_service* tservice) {
   Context ctx_1;
   ctx_1.add(serviceMap);
   ctx_1.add("func_list", vecFunctionMap);
+  for (std::vector<string>::iterator itr = src_filename_list.begin(); itr != src_filename_list.end(); itr++) {
+    PlustacheTypes::ObjectType obj;
+    obj["src_filename"] = *itr;
+    ctx_1.add("src_filename_list", obj);
+  }
 
   //开始生成
   std::ifstream if_mtpl_file_list;
