@@ -312,8 +312,10 @@ class ThreadManager::Worker: public Runnable {
         if (task->state_ == ThreadManager::Task::EXECUTING) {
           try {
             task->run();
+          } catch(const std::exception& e) {
+            GlobalOutput.printf("[ERROR] task->run() raised an exception: %s", e.what());
           } catch(...) {
-            // XXX need to log this
+            GlobalOutput.printf("[ERROR] task->run() raised an unknown exception");
           }
         }
       }
