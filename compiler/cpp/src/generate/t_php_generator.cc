@@ -109,6 +109,7 @@ class t_php_generator : public t_oop_generator {
   void generate_typedef  (t_typedef*  ttypedef);
   void generate_enum     (t_enum*     tenum);
   void generate_const    (t_const*    tconst);
+  void generate_consts   (std::vector<t_const*> consts);
   void generate_struct   (t_struct*   tstruct);
   void generate_xception (t_struct*   txception);
   void generate_service  (t_service*  tservice);
@@ -488,6 +489,28 @@ void t_php_generator::generate_const(t_const* tconst) {
   f_types_ << "$GLOBALS['" << program_name_ << "_CONSTANTS']['" << name << "'] = ";
   f_types_ << render_const_value(type, value);
   f_types_ << ";" << endl << endl;
+}
+
+/**
+ * Generates a class that holds all the constants.
+ */
+void t_php_generator::generate_consts(std::vector<t_const*> consts) {
+  //为了兼容之前的逻辑
+  t_generator::generate_consts(consts);
+
+  //新生成class内部的const
+  f_types_ << endl << endl;
+  f_types_ << "final class " << capitalize(camelcase(program_name_)) << "Constants {" << endl;
+  indent_up();
+
+  vector<t_const*>::iterator c_iter;
+  for (c_iter = consts.begin(); c_iter != consts.end(); ++c_iter) {
+    indent(f_types_) << "const " << (*c_iter)->get_name() << " = ";
+    f_types_ << render_const_value((*c_iter)->get_type(), (*c_iter)->get_value()) << ";" << endl;
+  }
+
+  indent_down();
+  f_types_ << "}" << endl << endl;
 }
 
 /**
