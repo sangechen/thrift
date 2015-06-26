@@ -3090,6 +3090,26 @@ void ProcessorGenerator::generate_class_definition() {
       ";" << endl;
   }
 
+  for (f_iter = functions.begin(); f_iter != functions.end(); ++f_iter) {
+    f_header_ <<
+      indent() << "processMap_[\"" << (*f_iter)->get_name() << "\"] = ";
+    if (generator_->gen_templates_) {
+      f_header_ << "ProcessFunctions(" << endl;
+      if (generator_->gen_templates_only_) {
+        indent(f_header_) << "  NULL," << endl;
+      } else {
+        indent(f_header_) << "  &" << class_name_ << "::process_" <<
+          (*f_iter)->get_name() << "," << endl;
+      }
+      indent(f_header_) << "  &" << class_name_ << "::process_" <<
+        (*f_iter)->get_name() << ")";
+    } else {
+      f_header_ << "&" << class_name_ << "::process_" << (*f_iter)->get_name();
+    }
+    f_header_ <<
+      ";" << endl;
+  }
+
   indent_down();
   f_header_ <<
     indent() << "}" << endl <<
