@@ -2625,7 +2625,7 @@ void t_cpp_generator::generate_service_client(t_service* tservice, string style)
       // Serialize the request
       out <<
         indent() << "int32_t cseqid = 0;" << endl <<
-        indent() << _this << "oprot_->writeMessageBegin(\"" <<
+        indent() << _this << "oprot_->writeMessageBegin(\"" << underscore(service_name_) << "." <<
         (*f_iter)->get_name() <<
         "\", ::apache::thrift::protocol::T_CALL, cseqid);" << endl <<
         endl <<
@@ -3072,7 +3072,7 @@ void ProcessorGenerator::generate_class_definition() {
 
   for (f_iter = functions.begin(); f_iter != functions.end(); ++f_iter) {
     f_header_ <<
-      indent() << "processMap_[\"" << (*f_iter)->get_name() << "\"] = ";
+      indent() << "processMap_[\"" << this->generator_->underscore(service_name_) << "." << (*f_iter)->get_name() << "\"] = ";
     if (generator_->gen_templates_) {
       f_header_ << "ProcessFunctions(" << endl;
       if (generator_->gen_templates_only_) {

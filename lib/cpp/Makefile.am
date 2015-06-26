@@ -47,7 +47,7 @@ lib_LTLIBRARIES += libthriftqt.la
 pkgconfig_DATA += thrift-qt.pc
 endif
 
-AM_CXXFLAGS = -Wall
+AM_CXXFLAGS = -Wall -std=c++11
 AM_CPPFLAGS = $(BOOST_CPPFLAGS) -I$(srcdir)/src
 AM_LDFLAGS = $(BOOST_LDFLAGS)
 
